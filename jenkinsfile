@@ -1,0 +1,73 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_ACCOUNT_ID = "${AWS_ACCOUNT_ID}"
+        AWS_DEFAULT_REGION = "${AWS_DEFAULT_REGION}"
+        IMAGE_REPO_NAME = "${IMAGE_REPO_NAME}"
+        IMAGE_TAG = "${IMAGE_TAG}"
+        REPOSITORY_URI = "${REPOSITORY_URI}"
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        
+        stage('Install AWS CLI') {
+            steps {
+                // Install the AWS CLI
+                sh '''
+                    apt-get update
+                    apt-get install -y awscli
+                    aws --version
+                '''
+            }
+        }
+        
+        stage('Logging into AWS ECR') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'AWS_ID', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                        sh """
+                            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                            aws configure set default.region $AWS_DEFAULT_REGION
+                            aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('SCM') {
+            steps {
+                script {
+                    // Clone the repository
+                    git credentialsId: 'GIT_CREDENTIALS_ID', url: 'https://github.com/irfan-1117/beautiful-quotes.git', branch: 'main'
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                // Build Docker image
+                script {
+                    docker.build("${IMAGE_REPO_NAME}:${IMAGE_TAG}")
+                    sh 'docker images'
+                }
+            }
+        }
+        
+        stage('Pushing to ECR') {
+            steps {  
+                script {
+                    sh "docker tag ${IMAGE_REPO_NAME}:${IMAGE_TAG} ${REPOSITORY_URI}:${IMAGE_TAG}"
+                    sh "docker push ${REPOSITORY_URI}:${IMAGE_TAG}"
+                }
+            }
+        }
+    }
+}
