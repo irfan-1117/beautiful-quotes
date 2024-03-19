@@ -7,6 +7,11 @@ pipeline {
         IMAGE_REPO_NAME = "${IMAGE_REPO_NAME}"
         IMAGE_TAG = "${IMAGE_TAG}"
         REPOSITORY_URI = "${REPOSITORY_URI}"
+        EC2_INSTANCE_IP = "${EC2_INSTANCE_IP}"
+        SSH_USER = "${SSH_USER}"
+        SSH_PRIVATE_KEY = credentials('SSH-KEY')
+        AWS_ACCESS_KEY_ID = "${AWS_ACCESS_KEY_ID}"
+        AWS_SECRET_ACCESS_KEY = "${AWS_SECRET_ACCESS_KEY}"
     }
 
     stages {
@@ -61,11 +66,34 @@ pipeline {
             }
         }
         
-        stage('Pushing to ECR') {
+        stage('Pushing to AWS-ECR') {
             steps {  
                 script {
                     sh "docker tag ${IMAGE_REPO_NAME}:${IMAGE_TAG} ${REPOSITORY_URI}:${IMAGE_TAG}"
                     sh "docker push ${REPOSITORY_URI}:${IMAGE_TAG}"
+                }
+            }
+        }
+		
+        stage('Deploy to EC2-Instance') {
+            steps {
+                script {
+                    sshagent(['SSH-KEY']) {
+                        def remoteCommands = """
+                            sudo apt-get update -y && 
+                            sudo apt-get install -y awscli && 
+                            aws --version && 
+                            aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID} && 
+                            aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY} && 
+                            aws configure set default.region ${AWS_DEFAULT_REGION} && 
+                            aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com && 
+                            docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG} && 
+                            docker images && docker run -d -p 8000:8000 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}
+                        """.stripIndent()
+
+                        def sshScript = "ssh -o StrictHostKeyChecking=no ${SSH_USER}@${EC2_INSTANCE_IP} '${remoteCommands}'"
+                        sh sshScript
+                    }
                 }
             }
         }
